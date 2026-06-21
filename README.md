@@ -26,22 +26,52 @@
 
 ---
 
-## Overview
+## Architecture Overview
 
 <div align="center">
-<img src="assets/architecture_overview.png" width="90%"/>
-<p><em>Venice-H1 pipeline. A frozen DeRIS backbone generates N=10 candidate masks. The re-ranker detects when the default query (Query-0) fails and selects a better alternative.</em></p>
+<img src="assets/architecture_overview.png" width="95%"/>
 </div>
 
-**Key contributions:**
-- **Multi-Scale Grid Signatures** — 675-dim spatial descriptors pooled at 4×4, 8×8, 16×16 grids
-- **Failure Gate** — binary classifier: P(Query-0 is wrong), AUC 0.78
-- **Gain Predictor** — IoU-improvement estimator per candidate query
-- **Gated selection** — intervenes only on predicted failures; backbone-decoupled
+<p align="center"><em>Venice-H1 pipeline. A frozen DeRIS backbone (left) generates N=10 candidate masks. Multi-scale grid signatures (center) encode spatial quality. The Failure Re-Ranker (right) gates intervention: it only overrides Query-0 when confident the default choice is wrong.</em></p>
 
 ---
 
-## Results (RefCOCO/+/g, DeRIS-L backbone)
+## The Failure-Case Bottleneck
+
+<div align="center">
+<table>
+<tr>
+<td width="50%"><img src="assets/error_budget.png" width="100%"/></td>
+<td width="50%"><img src="assets/iou_scatter_analysis.png" width="100%"/></td>
+</tr>
+<tr>
+<td align="center"><em>7–18% of samples (red) generate 40–68% of total error. A better query exists.</em></td>
+<td align="center"><em>Failure cases form a "triangle of opportunity": low default IoU, high best-query IoU.</em></td>
+</tr>
+</table>
+</div>
+
+---
+
+## Multi-Scale Grid Signatures
+
+<div align="center">
+<img src="assets/grid_signature_vis.png" width="85%"/>
+</div>
+
+<p align="center"><em>From mask probability P_i, we compute grid signatures at 4×4 (coarse), 8×8 (medium), 16×16 (fine). Each scale captures complementary spatial structure. Combined: <b>675-dim descriptor</b> per candidate.</em></p>
+
+<div align="center">
+<img src="assets/grid_cells_detail_v2.png" width="85%"/>
+</div>
+
+<p align="center"><em>Multi-scale grid cells inspired by entorhinal cortex representations. Coarse grids capture global layout, fine grids encode boundary quality.</em></p>
+
+---
+
+## Results
+
+### Full dataset (RefCOCO/+/g, DeRIS-L backbone)
 
 | Split | Failure Rate | Q0 mIoU | Venice-H1 | Δ | Gate AUC |
 |---|---|---|---|---|---|
@@ -51,18 +81,77 @@
 | RefCOCO+ val | 9.3% | 73.46 | 73.60 | **+0.14** | — |
 | RefCOCOg val | 11.7% | 69.53 | 69.84 | **+0.31** | — |
 
-On **failure cases only** (where the re-ranker intervenes):
+### On failure cases only
 
 | Metric | Value |
 |---|---|
 | Δ_fail (mIoU improvement) | **+1.824** |
-| Harmful-switch rate | < 0.6% |
+| Harmful-switch rate | **< 0.6%** |
+| AUC (failure detection) | **0.778** |
+
+<div align="center">
+<img src="assets/per_split_improvement.png" width="80%"/>
+</div>
+
+<p align="center"><em>Per-split improvement bars: Venice-H1 yields positive Δ across all 8 evaluation splits.</em></p>
+
+---
+
+## Failure Gate & ROC Analysis
+
+<div align="center">
+<table>
+<tr>
+<td width="50%"><img src="assets/roc_curves.png" width="100%"/></td>
+<td width="50%"><img src="assets/coverage_risk.png" width="100%"/></td>
+</tr>
+<tr>
+<td align="center"><em>ROC curves for the Failure Gate across splits. AUC 0.78–0.82.</em></td>
+<td align="center"><em>Coverage-risk trade-off: the gate maintains low harmful-switch rate across all τ.</em></td>
+</tr>
+</table>
+</div>
+
+---
+
+## Qualitative Results
+
+<div align="center">
+<img src="assets/qualitative_examples.jpg" width="95%"/>
+</div>
+
+<p align="center"><em>Qualitative re-ranking on RefCOCO val. Each row: input, ground truth, default query (red, fails), Venice-H1 corrected selection (blue). In all cases, Venice-H1 recovers IoU > 84%.</em></p>
+
+---
+
+## Medical Cross-Domain Transfer
+
+<div align="center">
+<img src="assets/medical_cross_domain.png" width="85%"/>
+</div>
+
+<p align="center"><em>Zero-shot transfer to medical RIS: MS-CXR (+1.16 mIoU) and M3D-RefSeg-2D (+0.51 mIoU) without domain-specific fine-tuning.</em></p>
+
+---
+
+## Ablation Study
+
+<div align="center">
+<img src="assets/ablation_study.png" width="85%"/>
+</div>
+
+| Configuration | ∆_fail | Gate AUC |
+|---|---|---|
+| BASE only (no grid) | +1.01 | 0.812 |
+| 4×4 grid only | +1.01 | 0.821 |
+| 8×8 grid only | +0.87 | 0.790 |
+| 16×16 grid only | +1.00 | 0.828 |
+| **BASE + all grids (ours)** | **+1.22** | **0.807** |
 
 ---
 
 ## Reproduce Paper Results
 
-This section guides you through reproducing the exact numbers in the paper.  
 You need: a CUDA-capable GPU, DeRIS-L weights, and RefCOCO data.
 
 ### Step 0 — Install
@@ -71,6 +160,7 @@ You need: a CUDA-capable GPU, DeRIS-L weights, and RefCOCO data.
 git clone https://github.com/odaxai/Venice-H1.git
 cd Venice-H1
 pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Step 1 — Download the base model (DeRIS-L)
@@ -78,104 +168,63 @@ pip install -r requirements.txt
 Venice-H1 is a **post-hoc re-ranker on top of DeRIS-L**. You need DeRIS-L to extract features.
 
 ```bash
-# DeRIS-L weights (official release)
-# 1. Clone the DeRIS repository
+# Clone DeRIS repository
 git clone https://github.com/kkb-src/DeRIS.git
 
-# 2. Download DeRIS-L checkpoint from their official release
-#    (see https://github.com/kkb-src/DeRIS for the download link)
-#    Expected file: deris_l.pth (~750MB)
-
-# 3. Prepare RefCOCO/RefCOCO+/RefCOCOg annotations
-#    Place under data/refcoco/, data/refcoco+/, data/refcocog/
-#    Standard structure from https://github.com/lichengunc/refer
+# Download DeRIS-L checkpoint from their official release
+# See https://github.com/kkb-src/DeRIS for the link
+# Expected: checkpoints/deris_l.pth (~750MB)
 ```
 
-### Step 2 — Download the Venice-H1 checkpoint
+### Step 2 — Download Venice-H1 checkpoint
 
-```bash
-python -c "
+```python
 from huggingface_hub import hf_hub_download
-path = hf_hub_download(repo_id='OdaxAI/venice-h1', filename='venice_h1_deris_l.pt')
-print('Saved to:', path)
-"
+path = hf_hub_download(repo_id="OdaxAI/venice-h1", filename="venice_h1_deris_l.pt")
+print("Saved to:", path)
 ```
 
-Or download manually from [🤗 OdaxAI/venice-h1](https://huggingface.co/OdaxAI/venice-h1/blob/main/venice_h1_deris_l.pt).
+Or download from [🤗 OdaxAI/venice-h1](https://huggingface.co/OdaxAI/venice-h1).
 
-### Step 3 — Verify the checkpoint (no data needed)
-
-Run a complete architecture and metrics verification — **no GPU, no dataset required**:
+### Step 3 — Verify checkpoint (no GPU needed)
 
 ```bash
 python reproduce_results.py --verify_only
 ```
 
-Expected output:
 ```
-══════════════════════════════════════════════════════════════
- Venice-H1 · Reproduction Script
- OdaxAI Research · Nicolò Savioli, Ph.D.
-══════════════════════════════════════════════════════════════
+── Architecture Verification ──────────────────
+  Parameters : 11,296,258  ✓ MATCH
 
-── Architecture Verification ──────────────────────────────
-  query_feat_dim : 256  (expected 256)
-  hidden_dim     : 512  (expected 512)
-  n_layers       : 3    (expected 3)
-  n_heads        : 8    (expected 8)
-  n_queries      : 10   (expected 10)
-  Parameters     : 11,296,258  (expected 11,296,258)
-  Status         : ✓ MATCH
-
-── Forward Pass Verification ───────────────────────────────
-  ✓ Forward pass OK
-
-── Paper Cross-Check (RefCOCO val) ─────────────────────────
-  ✓ delta_fail   : 1.8244  (paper: 1.824)
-  ✓ auc_fail     : 0.7776  (paper: 0.778)
-  ✓ delta_full   : 0.0392  (paper: 0.039)
+── Paper Cross-Check (RefCOCO val) ─────────────
+  ✓ delta_fail : 1.8244  (paper: 1.824)
+  ✓ auc_fail   : 0.7776  (paper: 0.778)
+  ✓ delta_full : 0.0392  (paper: 0.039)
 ```
 
 ### Step 4 — Extract features from DeRIS-L
 
 ```bash
 python scripts/extract_features.py \
-    --deris_checkpoint /path/to/deris_l.pth \
-    --data_root /path/to/refcoco/ \
+    --deris_checkpoint checkpoints/deris_l.pth \
+    --data_root data/refcoco/ \
     --dataset refcoco --split val \
     --output data/
-
-# Repeat for all 8 splits (refcoco val/testA/testB, refcoco+ val/testA/testB, refcocog val/test)
-# Output: data/cached_val_refcoco_unc_feats.pt (~200MB per split)
 ```
 
-### Step 5 — Full evaluation with pre-trained checkpoint
+### Step 5 — Full evaluation
 
 ```bash
-python reproduce_results.py \
-    --features_dir data/ \
-    --splits all
+python reproduce_results.py --features_dir data/ --splits all
 ```
 
-Or evaluate a specific split:
-```bash
-python evaluate.py \
-    --checkpoint $(python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('OdaxAI/venice-h1','venice_h1_deris_l.pt'))") \
-    --splits data/cached_val_refcoco_unc_feats.pt \
-             data/cached_testA_refcoco_unc_feats.pt \
-             data/cached_testB_refcoco_unc_feats.pt \
-    --tau 0.9
-```
-
-### Step 6 — Train from scratch (~3 min on a single GPU)
-
-If you want to re-train Venice-H1 from scratch on your own extracted features:
+### Step 6 — Train from scratch (~3 min)
 
 ```bash
 python train.py \
     --config venice_h1/configs/default.yaml \
     --train_cache data/cached_train_feats.pt \
-    --val_cache   data/cached_val_refcoco_unc_feats.pt
+    --val_cache data/cached_val_refcoco_unc_feats.pt
 ```
 
 ---
@@ -187,45 +236,29 @@ import torch
 from huggingface_hub import hf_hub_download
 from venice_h1.model.reranker import VeniceH1Reranker
 
-# Load checkpoint
 ckpt_path = hf_hub_download(repo_id="OdaxAI/venice-h1", filename="venice_h1_deris_l.pt")
 ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-cfg  = ckpt["config"]
+cfg = ckpt["config"]
 
-# Build model
 model = VeniceH1Reranker(
-    query_feat_dim=cfg["query_feat_dim"],  # 256
-    hidden_dim=cfg["hidden_dim"],          # 512
-    n_layers=cfg["n_layers"],              # 3
-    n_heads=cfg["n_heads"],                # 8
-    tau=cfg["tau"],                        # 0.9
+    query_feat_dim=cfg["query_feat_dim"],
+    hidden_dim=cfg["hidden_dim"],
+    n_layers=cfg["n_layers"],
+    n_heads=cfg["n_heads"],
+    tau=cfg["tau"],
 )
 model.load_state_dict(ckpt["model"], strict=False)
 model.eval()
 
-# features: (B, N=10, 936)
-#   = query_embed(256) + grid_sig(675) + mask_stats(4) + det_score(1)
-#   produced by scripts/extract_features.py
+# features: (B, N=10, 936) from scripts/extract_features.py
 with torch.no_grad():
-    out      = model(features, det_scores, mask_means)
-    p_fail   = out["p_fail"]        # (B,) — failure probability ∈ [0,1]
-    selected = model.rerank(features, det_scores, mask_means)  # (B,) — best query idx
+    out = model(features, det_scores, mask_means)
+    selected = model.rerank(features, det_scores, mask_means)
 ```
 
 ---
 
-## Docker
-
-```bash
-docker build -t venice-h1 .
-docker run --gpus all \
-    -v /path/to/data:/workspace/data \
-    venice-h1 python reproduce_results.py --verify_only
-```
-
----
-
-## Architecture
+## Architecture Diagram
 
 ```
 Input: Image I, expression e, threshold τ
@@ -233,12 +266,12 @@ Input: Image I, expression e, threshold τ
 Step 1  Frozen DeRIS-L (external, not included)
         {q_i, M_i, s_i}^{N-1}_{i=0} = DeRIS(I, e)
 
-Step 2  Feature assembly  (offline, once)
+Step 2  Feature assembly (offline, once)
         P_i = sigmoid(M_i)
         g_i = MultiScaleGridSignatures(P_i)  ← 675 dim
         f_i = [q_i; s_i; μ_i; σ_i; a_i; g_i]  ∈ R^{936}
 
-Step 3  Venice-H1 Re-Ranker  (11.3M params)
+Step 3  Venice-H1 Re-Ranker (11.3M params)
         ┌──────────────────────────────────────────────┐
         │  QueryEncoder: 2-layer MLP → R^{512}         │
         │  Transformer:  L=3, A=8, pre-norm GELU       │
@@ -257,6 +290,16 @@ Output: mask P_{i*}
 
 ---
 
+## Docker
+
+```bash
+docker build -t venice-h1 .
+docker run --gpus all -v /path/to/data:/workspace/data \
+    venice-h1 python reproduce_results.py --verify_only
+```
+
+---
+
 ## Repository Structure
 
 ```
@@ -266,28 +309,16 @@ Venice-H1/
 │   │   ├── grid_signatures.py     # Multi-Scale Grid Signatures (Sec 3.3)
 │   │   └── reranker.py            # Failure Gate + Gain Predictor (Sec 3.4)
 │   └── configs/
-│       └── default.yaml           # Exact paper hyperparameters (Sec 4.2)
+│       └── default.yaml           # Exact paper hyperparameters
 ├── scripts/
-│   └── extract_features.py        # Feature extraction from DeRIS-L (Sec 3.1-3.3)
+│   └── extract_features.py        # Feature extraction from DeRIS-L
 ├── reproduce_results.py           # ← ONE-COMMAND paper reproduction
-├── train.py                       # Training loop (Sec 3.5)
-├── evaluate.py                    # Full evaluation with all metrics
+├── train.py                       # Training loop
+├── evaluate.py                    # Full evaluation
 ├── Dockerfile
 ├── requirements.txt
 └── assets/                        # Paper figures
 ```
-
----
-
-## Ablation Study
-
-| Configuration | ∆_fail | Gate AUC |
-|---|---|---|
-| BASE only (no grid) | +1.01 | 0.812 |
-| 4×4 grid only | +1.01 | 0.821 |
-| 8×8 grid only | +0.87 | 0.790 |
-| 16×16 grid only | +1.00 | 0.828 |
-| **BASE + all grids (ours)** | **+1.22** | **0.807** |
 
 ---
 
