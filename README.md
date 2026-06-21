@@ -21,9 +21,7 @@
 
 ---
 
-## TL;DR
-
-> Modern RIS systems generate N candidate masks but blindly trust a detection-score heuristic to pick the final one. In 7–18% of samples, this choice is **wrong** — and these failures drive **40–68% of total error**. Venice-H1 detects these failures and fixes them, adding only ~11M parameters and <1ms latency.
+> Modern RIS systems generate N candidate masks but rely on a detection-score heuristic to pick the final one. In **7–18% of samples** this choice is wrong — and these failures drive **40–68% of total segmentation error**. Venice-H1 detects and corrects these failures, adding only ~11M parameters and <1ms latency.
 
 ---
 
