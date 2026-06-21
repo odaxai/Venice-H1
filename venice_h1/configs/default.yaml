@@ -1,0 +1,53 @@
+# Venice-H1 default configuration
+# Matches paper specification exactly (Sections 3.4, 3.5, 4.2)
+# OdaxAI Research — nicolo.savioli@odaxai.com
+
+model:
+  query_feat_dim: 256       # D: DeRIS query embedding dimension
+  hidden_dim: 512           # Hd: Transformer hidden size
+  n_layers: 3               # L: Transformer encoder layers
+  n_heads: 8                # A: attention heads
+  n_queries: 10             # N: candidate queries per sample
+  dropout: 0.1              # 10% dropout
+  use_grid: true            # multi-scale grid signatures (675-dim)
+  tau: 0.05                 # Failure Gate threshold (canonical operating point)
+
+training:
+  batch_size: 512
+  epochs: 20                # 20 epochs on cached features
+  lr: 5.0e-4               # AdamW learning rate
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_epochs: 3          # 3-epoch warmup
+  seed: 42
+  fp16: true                # mixed precision
+
+  # Loss: L = L_gate + lambda * L_gain
+  lambda_gain: 5.0          # λ=5 (paper Section 3.5)
+  focal_gamma: 2.0          # focal BCE γ=2
+  auto_wpos: true           # automatic positive weight for class imbalance
+
+data:
+  # Pre-extracted feature caches (.pt files)
+  # Produced by scripts/extract_features.py
+  # Total: ~3.2 GB for 126k training samples
+  train_splits:
+    - data/cached_train_refcoco_unc_feats.pt
+    - data/cached_train_refcoco+_unc_feats.pt
+    - data/cached_train_refcocog_umd_feats.pt
+
+  val_splits:
+    - data/cached_val_refcoco_unc_feats.pt
+    - data/cached_val_refcoco+_unc_feats.pt
+    - data/cached_val_refcocog_umd_feats.pt
+
+  test_splits:
+    - data/cached_testA_refcoco_unc_feats.pt
+    - data/cached_testB_refcoco_unc_feats.pt
+    - data/cached_testA_refcoco+_unc_feats.pt
+    - data/cached_testB_refcoco+_unc_feats.pt
+    - data/cached_test_refcocog_umd_feats.pt
+
+output:
+  checkpoint_dir: checkpoints/
+  log_dir: runs/venice_h1/

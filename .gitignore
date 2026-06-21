@@ -1,0 +1,39 @@
+# Byte-compiled / cached
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and checkpoints (too large for git)
+data/
+checkpoints/
+outputs/
+runs/
+*.pt
+*.pth
+*.ckpt
+
+# Logs
+*.log
+*.json
+!venice_h1/configs/*.yaml
+
+# Paper sources (separate)
+papers/
+figures/
+masks/
