@@ -1,0 +1,44 @@
+name: Venice-H1 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: |
+          pytest tests/test_pipeline.py -v --tb=short
+
+      - name: Verify model parameter count
+        run: |
+          python -c "
+          from venice_h1.model.reranker import VeniceH1Reranker
+          model = VeniceH1Reranker(query_feat_dim=256, hidden_dim=512, n_layers=3, n_heads=8)
+          n = model.num_parameters()
+          print(f'Venice-H1 parameters: {n:,}')
+          assert 10_000_000 < n < 13_000_000, f'Expected ~11.3M, got {n:,}'
+          print('✓ Parameter count matches paper specification')
+          "
