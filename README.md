@@ -63,7 +63,7 @@ On **failure cases only** (where the re-ranker intervenes):
 ## Reproduce Paper Results
 
 This section guides you through reproducing the exact numbers in the paper.  
-You need: a GPU (RTX 3090 or similar), DeRIS-L weights, and RefCOCO data.
+You need: a CUDA-capable GPU, DeRIS-L weights, and RefCOCO data.
 
 ### Step 0 — Install
 
@@ -167,7 +167,7 @@ python evaluate.py \
     --tau 0.9
 ```
 
-### Step 6 — Train from scratch (~3 min on RTX 3090)
+### Step 6 — Train from scratch (~3 min on a single GPU)
 
 If you want to re-train Venice-H1 from scratch on your own extracted features:
 
@@ -252,7 +252,7 @@ Step 4  Gated selection
 
 Output: mask P_{i*}
 ─────────────────────────────────────────────────────────
-~11.3M parameters · <1 ms overhead · RTX 3090 ✓
+~11.3M parameters · <1 ms overhead
 ```
 
 ---

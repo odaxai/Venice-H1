@@ -20,7 +20,7 @@ Tests:
  10. Grid cell adaptation sweep (try different hyperparams)
 
 Run:
-    cd /home/bionick87/miccai_2026/code/Venice-H1
+    cd Venice-H1
     python tests/test_deris_gridcell.py
 
     # Or run specific test:
@@ -70,7 +70,7 @@ from gridcell_models.paper_logger import DERIS_L_BASELINE
 # =====================================================================
 # DEFAULTS
 # =====================================================================
-DERIS_CKPT = '/home/bionick87/miccai_2026/model/DERIS/DeRIS-L-refcoco.pth'
+DERIS_CKPT = './checkpoints/deris_l.pth'
 DERIS_CONFIG = os.path.join(DERIS_ROOT, 'configs', 'refcoco',
                             'DERIS-L-refcoco.py')
 

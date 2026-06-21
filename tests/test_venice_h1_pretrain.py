@@ -6,7 +6,7 @@ Validates model architecture, stability, baseline preservation, and LoRA
 integration BEFORE launching the definitive training run.
 
 Run:
-    cd /home/bionick87/miccai_2026/code/Venice-H1
+    cd Venice-H1
     python tests/test_venice_h1_pretrain.py
 
 Expected: All tests PASS in ~3-5 minutes on a single GPU.
@@ -45,11 +45,11 @@ from gridcell_models.lora import (
 )
 
 # Defaults
-ONEREF_CKPT = ('/home/bionick87/miccai_2026/model/pretrain_weights/oneref/'
+ONEREF_CKPT = ('./checkpoints/oneref/'
                'rec_single_dataset_finetuning_base/unc/best_checkpoint.pth')
-SPM_PATH = '/home/bionick87/miccai_2026/model/pretrain_weights/beit3.spm'
-DATA_ROOT = '/home/bionick87/miccai_2026/dataset/oneref_data'
-SPLIT_ROOT = ('/home/bionick87/miccai_2026/dataset/oneref_annotations/'
+SPM_PATH = './checkpoints/beit3.spm'
+DATA_ROOT = './data/oneref'
+SPLIT_ROOT = ('./data/oneref_annotations/'
               'ref_data_shuffled/single_dataset')
 
 # =====================================================================
@@ -1076,7 +1076,7 @@ def test_medical_pipeline(device):
 
     # Import medical loaders from train.py
     # We reproduce the loading here to avoid importing the full train module
-    MEDICAL_ROOT = '/home/bionick87/miccai_2026/dataset'
+    MEDICAL_ROOT = './data'
 
     # Inline medical loaders (same logic as train.py)
     import json

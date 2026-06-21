@@ -251,7 +251,7 @@ def threshold_sweep(cached, tau, margin_pred, temp, margin_gap=0.0):
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     set_seed(42)
-    cache_dir = "/home/bionick87/miccai_2026/features"
+    cache_dir = "./outputs/feature_cache"
     
     # ========== SWEEP GRID ==========
     taus = [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9]

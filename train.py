@@ -8,7 +8,7 @@ Matches paper Section 3.5 exactly:
   - L_gain: smooth-L1 IoU regression on ALL samples
   - AdamW (lr=5e-4, wd=1e-4), cosine + 3-epoch warmup
   - 20 epochs, batch 512, FP16
-  - Training time: ~3 min on single RTX 3090
+  - Training time: ~3 min on a single GPU
 
 Usage:
     python train.py --config venice_h1/configs/default.yaml

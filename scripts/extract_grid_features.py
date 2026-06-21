@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ECCV 2026: Fast Multi-Process Multi-GPU Feature Extraction (2x3090 optimized)
+Multi-Process Multi-GPU Feature Extraction
 with Grid Multi-Scale Signatures.
 
 Key speedups vs baseline:
@@ -23,18 +23,25 @@ Outputs per split shard:
   q0_iou [M] (fp16)
 
 Usage:
-  # Use both 3090
-  python scripts/extract_grid_features_eccv_fast.py --world_auto --gpus 0,1 --batch_size 128
+  # Use multiple GPUs
+  python scripts/extract_grid_features.py --world_auto --gpus 0,1 --batch_size 128
+
+  # Custom cache dir (always use absolute path so saves work after os.chdir)
+  python scripts/extract_grid_features.py --world_auto --gpus 0,1 --cache_dir ./outputs/feature_cache --num_workers 16
 
   # Resume
-  python scripts/extract_grid_features_eccv_fast.py --world_auto --gpus 0,1 --resume
+  python scripts/extract_grid_features.py --world_auto --gpus 0,1 --resume
 
   # Merge
-  python scripts/extract_grid_features_eccv_fast.py --merge --cache_dir ./outputs/eccv_full_cache
+  python scripts/extract_grid_features.py --merge --cache_dir ./outputs/feature_cache
 """
 
 import os
 import sys
+
+# Must set BEFORE importing torch for CUDA memory allocator config
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import json
 import time
 import glob
@@ -55,7 +62,7 @@ from pycocotools import mask as maskUtils
 
 # -------- Paths --------
 VENICE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DERIS_ROOT = "/home/bionick87/miccai_2026/code/DeRIS/DeRIS-main"
+DERIS_ROOT = "./DeRIS"
 sys.path.insert(0, VENICE_ROOT)
 sys.path.insert(0, DERIS_ROOT)
 
@@ -244,17 +251,14 @@ def load_deris_model(checkpoint_path, config_path, device):
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state = ckpt.get("model", ckpt.get("state_dict", ckpt))
 
-    # Strip DDP "module." prefix if present (otherwise strict=False silently drops EVERY key)
-    if any(k.startswith("module.") for k in state.keys()):
-        state = {k[len("module."):]: v for k, v in state.items()}
+    # Strip "module." prefix from DistributedDataParallel checkpoints
+    state = {k.replace("module.", "", 1): v for k, v in state.items()}
 
     missing, unexpected = model.load_state_dict(state, strict=False)
-    if len(missing) > 0:
-        print(f"  [warn] {len(missing)} missing keys (e.g. {missing[:3]})")
-    if len(unexpected) > 0:
-        print(f"  [warn] {len(unexpected)} unexpected keys (e.g. {unexpected[:3]})")
-    n_loaded = len(state) - len(unexpected)
-    print(f"  [load] {n_loaded}/{len(state)} ckpt tensors mapped into model")
+    if missing:
+        print(f"[load_deris_model] WARN missing keys ({len(missing)}): {missing[:5]}")
+    if unexpected:
+        print(f"[load_deris_model] WARN unexpected keys ({len(unexpected)}): {unexpected[:5]}")
     model.to(device)
     model.eval()
     for p in model.parameters():
@@ -312,10 +316,7 @@ def extract_features_batch_fast(model, inputs, gt_rles, device, use_amp=True):
         query_feat = perception_results["query_feat"]   # [B,N,D]
 
         if "pred_refer_logits" in perception_results:
-            # DeRIS convention: SEG_cls outputs (1+1) classes; channel 0 = referent / positive class.
-            # See DeRIS get_predictions_parts (mix_gref_hiervg_mr_loopback.py:396):
-            #   scores = F.softmax(box_cls, dim=-1)[:, :, 0]
-            det_scores = perception_results["pred_refer_logits"].softmax(dim=-1)[..., 0]  # [B,N]
+            det_scores = perception_results["pred_refer_logits"].softmax(dim=-1)[..., 0]  # [B,N]  class 0 = foreground
         else:
             det_scores = torch.full(
                 (query_feat.shape[0], query_feat.shape[1]),
@@ -367,6 +368,7 @@ def _chunk_path(split_dir, shard_id, chunk_id):
 def _write_chunk(split_dir, shard_id, chunk_id, chunk_feats, last_index):
     """Write a single chunk file (only new samples since last flush). Atomic."""
     path = _chunk_path(split_dir, shard_id, chunk_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     out = {k: torch.stack(v) for k, v in chunk_feats.items()}
     out["chunk_meta"] = {"shard_id": shard_id, "count": int(out["query_feat"].shape[0]), "last_index": int(last_index)}
     tmp = path + ".tmp"
@@ -374,8 +376,10 @@ def _write_chunk(split_dir, shard_id, chunk_id, chunk_feats, last_index):
     os.rename(tmp, path)
 
 
-def extract_shard(args, split_name, shard_id, num_shards, device):
-    """Extract features for one shard of a split. Indexed iteration + chunked flush."""
+def extract_shard(args, split_name, shard_id, num_shards, device, model=None, cfg=None):
+    """Extract features for one shard of a split. Indexed iteration + chunked flush.
+    If model/cfg are passed, reuse them (avoids reloading 18GB model per shard).
+    """
     split_dir = os.path.join(args.cache_dir, split_name)
     os.makedirs(split_dir, exist_ok=True)
 
@@ -395,7 +399,8 @@ def extract_shard(args, split_name, shard_id, num_shards, device):
     print(f"  SHARD {shard_id}/{num_shards} for {split_name} on device {device}")
     print(f"{'='*60}")
 
-    model, cfg = load_deris_model(args.deris_checkpoint, args.deris_config, device)
+    if model is None or cfg is None:
+        model, cfg = load_deris_model(args.deris_checkpoint, args.deris_config, device)
     dataset = build_full_dataset(cfg, split_name)
     total_size = len(dataset)
     indexed_ds = IndexedDataset(dataset)
@@ -593,6 +598,8 @@ def _finalize_from_chunks(args, split_dir, split_name, shard_id, num_shards, dev
     }
     result["complete"] = True
 
+    # Ensure directory exists (path is absolute; may run after os.chdir in load_deris)
+    os.makedirs(os.path.dirname(shard_path), exist_ok=True)
     tmp_path = shard_path + ".tmp"
     torch.save(result, tmp_path)
     os.rename(tmp_path, shard_path)
@@ -665,9 +672,11 @@ def worker_process(gpu_rank, gpu_id, shard_ids_per_split, args):
     """
     Worker for one GPU.
     NOTE: we map CUDA_VISIBLE_DEVICES to a single GPU per process for clean isolation.
+    Key fix: load model ONCE and reuse across all shards/splits (avoids 18GB reload per shard).
     """
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     # prevent CPU oversubscription (2 processes)
     torch.set_num_threads(1)
@@ -676,13 +685,21 @@ def worker_process(gpu_rank, gpu_id, shard_ids_per_split, args):
     torch.cuda.set_device(device)
 
     print(f"\n[GPU {gpu_id}] Starting worker (rank={gpu_rank})...")
+    print(f"[GPU {gpu_id}] Loading model once (reused across all shards)...")
+    model, cfg = load_deris_model(args.deris_checkpoint, args.deris_config, device)
+    torch.cuda.empty_cache()
+    mem_used = torch.cuda.memory_allocated(device) / 1e9
+    mem_reserved = torch.cuda.memory_reserved(device) / 1e9
+    print(f"[GPU {gpu_id}] Model loaded. GPU mem: {mem_used:.1f}GB allocated, {mem_reserved:.1f}GB reserved")
 
     splits = args.splits.split(",") if args.splits != "all" else ALL_SPLITS
 
     for split in splits:
         shard_ids = shard_ids_per_split[split][gpu_rank]
         for shard_id in shard_ids:
-            extract_shard(args, split, shard_id, args.shards_per_split, device)
+            extract_shard(args, split, shard_id, args.shards_per_split, device, model=model, cfg=cfg)
+            # Free activation memory between shards
+            torch.cuda.empty_cache()
 
     print(f"\n[GPU {gpu_id}] Worker done")
 
@@ -692,20 +709,21 @@ def worker_process(gpu_rank, gpu_id, shard_ids_per_split, args):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser("ECCV Grid Feature Extraction (FAST 2x3090)")
+    parser = argparse.ArgumentParser("Grid Feature Extraction (Multi-GPU)")
 
     # Paths
-    parser.add_argument("--deris_checkpoint", default="/home/bionick87/miccai_2026/model/DERIS/DeRIS-L-refcoco.pth")
-    parser.add_argument("--deris_config", default="/home/bionick87/miccai_2026/code/DeRIS/DeRIS-main/configs/refcoco/DERIS-L-refcoco.py")
-    parser.add_argument("--cache_dir", default="./outputs/eccv_full_cache")
+    parser.add_argument("--deris_checkpoint", default="./checkpoints/deris_l.pth")
+    parser.add_argument("--deris_config", default="./DeRIS/configs/refcoco/DERIS-L-refcoco.py")
+    parser.add_argument("--cache_dir", default="./outputs/feature_cache",
+                        help="Output directory for shards and merged *_feats.pt (use absolute path).")
 
     # Extraction params
     parser.add_argument("--splits", default="all", help="Comma-separated or 'all'")
-    parser.add_argument("--batch_size", type=int, default=128, help="3090: 128 is typical sweet spot")
-    parser.add_argument("--num_workers", type=int, default=8, help="per-process dataloader workers (2 GPUs => 2 processes)")
+    parser.add_argument("--batch_size", type=int, default=64, help="64 safe (model uses ~5GB, leaving room for activations)")
+    parser.add_argument("--num_workers", type=int, default=8, help="per-process dataloader workers")
     parser.add_argument("--prefetch_factor", type=int, default=4, help="DataLoader prefetch factor")
-    parser.add_argument("--flush_every", type=int, default=200, help="flush chunks every N batches")
-    parser.add_argument("--log_every", type=int, default=50)
+    parser.add_argument("--flush_every", type=int, default=30, help="flush chunks every N batches (write often)")
+    parser.add_argument("--log_every", type=int, default=10)
 
     # Multi-GPU
     parser.add_argument("--gpus", default="0,1", help="Comma-separated GPU IDs")
@@ -728,7 +746,7 @@ def main():
     num_gpus = len(gpu_ids)
 
     if args.shards_per_split is None:
-        # IMPORTANT: more shards than GPUs helps keep both 3090 busy across uneven splits.
+        # More shards than GPUs helps keep all GPUs busy across uneven splits.
         args.shards_per_split = max(num_gpus * 4, num_gpus)
 
     splits = args.splits.split(",") if args.splits != "all" else ALL_SPLITS
@@ -744,10 +762,12 @@ def main():
     # Manual shard mode (use only first GPU in list)
     if args.shard_id is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_ids[0])
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         torch.set_num_threads(1)
         device = torch.device("cuda:0")
+        model, cfg = load_deris_model(args.deris_checkpoint, args.deris_config, device)
         split = splits[0]
-        extract_shard(args, split, args.shard_id, args.shards_per_split, device)
+        extract_shard(args, split, args.shard_id, args.shards_per_split, device, model=model, cfg=cfg)
         return
 
     # Auto multi-process mode
