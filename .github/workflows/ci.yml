@@ -27,6 +27,7 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install pytest
+          pip install -e .
 
       - name: Run tests
         run: |
@@ -41,4 +42,23 @@ jobs:
           print(f'Venice-H1 parameters: {n:,}')
           assert 10_000_000 < n < 13_000_000, f'Expected ~11.3M, got {n:,}'
           print('✓ Parameter count matches paper specification')
+          "
+
+      - name: Verify reproduce_results.py (architecture check)
+        run: |
+          python -c "
+          from venice_h1.model.reranker import VeniceH1Reranker
+          import torch
+          model = VeniceH1Reranker(query_feat_dim=256, hidden_dim=512, n_layers=3, n_heads=8, tau=0.9)
+          model.eval()
+          features = torch.randn(4, 10, 936)
+          det_scores = torch.rand(4, 10)
+          mask_means = torch.rand(4, 10)
+          with torch.no_grad():
+              out = model(features, det_scores, mask_means)
+              selected = model.rerank(features, det_scores, mask_means)
+          assert out['p_fail'].shape == (4,)
+          assert out['gain_logits'].shape == (4, 10)
+          assert (selected >= 0).all() and (selected < 10).all()
+          print('✓ reproduce_results pipeline verified')
           "
