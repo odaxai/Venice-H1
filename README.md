@@ -6,7 +6,7 @@
 <h3>Failure-Aware Query Re-Ranking with Multi-Scale Grid Signatures<br>for Referring Image Segmentation</h3>
 
 <p>
-  <a href="https://arxiv.org/abs/2506.XXXXX"><img src="https://img.shields.io/badge/arXiv-2506.XXXXX-b31b1b.svg"/></a>
+  <a href="https://arxiv.org/abs/2606.22546"><img src="https://img.shields.io/badge/arXiv-2606.22546-b31b1b.svg"/></a>
   <a href="https://huggingface.co/OdaxAI/venice-h1"><img src="https://img.shields.io/badge/🤗%20HuggingFace-OdaxAI%2Fvenice--h1-yellow"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg"/></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-blue"/></a>
@@ -329,7 +329,7 @@ Venice-H1/
   title     = {Venice-H1: Failure-Aware Query Re-Ranking with Multi-Scale
                Grid Signatures for Referring Image Segmentation},
   author    = {Savioli, Nicol{\`o}},
-  journal   = {arXiv preprint arXiv:2506.XXXXX},
+  journal   = {arXiv preprint arXiv:2606.22546},
   year      = {2026},
   note      = {OdaxAI Research}
 }
